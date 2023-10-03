@@ -8,10 +8,11 @@
 #include "elf.h"
 
 extern char data[];  // defined by kernel.ld
-pde_t *kpgdir;  // for use in scheduler()
+pde_t *kpgdir;  // pointer to global page dir that will replace entrypgdir
 
-// Set up CPU's kernel segment descriptors.
+// Set up CPU's kernel segment descriptors. Uses an identify map like before.
 // Run once on entry on each CPU.
+// Sets permission flags for each segment as well as notion of ring levels.
 void
 seginit(void)
 {
@@ -21,6 +22,7 @@ seginit(void)
   // Cannot share a CODE descriptor for both kernel and user
   // because it would have to have DPL_USR, but the CPU forbids
   // an interrupt from CPL=0 to DPL=3.
+  // Note: 0xffffffff = 4 GB
   c = &cpus[cpuid()];
   c->gdt[SEG_KCODE] = SEG(STA_X|STA_R, 0, 0xffffffff, 0);
   c->gdt[SEG_KDATA] = SEG(STA_W, 0, 0xffffffff, 0);
@@ -30,7 +32,7 @@ seginit(void)
 }
 
 // Return the address of the PTE in page table pgdir
-// that corresponds to virtual address va.  If alloc!=0,
+// that corresponds to virtual address va.  If alloc != 0,
 // create any required page table pages.
 static pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
@@ -38,14 +40,22 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   pde_t *pde;
   pte_t *pgtab;
 
-  pde = &pgdir[PDX(va)];
-  if(*pde & PTE_P){
-    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+  pde = &(pgdir[PDX(va)]); // get the virtual address of the the page directory entry
+
+  if (*pde & PTE_P) { // check if pde (ptr to page table + flags) has present flag set
+    pgtab = (pte_t*) P2V(PTE_ADDR(*pde));
+
   } else {
-    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+    // If entry not present and we don't want to alloc, return NULL ptr.
+    // If we want to alloc, alloc a page for the new page table, and check return value.
+    // If err return value, return NULL ptr.
+    if (!alloc || (pgtab = (pte_t*) kalloc()) == 0)
       return 0;
+
     // Make sure all those PTE_P bits are zero.
+    // Undo previous memset() garbage filling
     memset(pgtab, 0, PGSIZE);
+
     // The permissions here are overly generous, but they can
     // be further restricted by the permissions in the page table
     // entries, if necessary.
@@ -63,15 +73,25 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   char *a, *last;
   pte_t *pte;
 
-  a = (char*)PGROUNDDOWN((uint)va);
-  last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
-  for(;;){
-    if((pte = walkpgdir(pgdir, a, 1)) == 0)
+  // Get ptrs to start of first and last pages to
+  a = (char*) PGROUNDDOWN((uint) va);
+  last = (char*) PGROUNDDOWN(((uint) va) + size - 1);
+
+  for (;;) {
+    // Use walkpgdir() with alloc = 1 to get a ptr to a page table entry.
+    // If NULL ptr, return -1 to indicate error
+    if ((pte = walkpgdir(pgdir, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_P)
+
+    // If the returned page has already been allocated, panic. Obviously,
+    // something would be seriously wrong with the walkpgdir function
+    if (*pte & PTE_P)
       panic("remap");
+
+    // Permission gits for PTE and present flag
     *pte = pa | perm | PTE_P;
-    if(a == last)
+
+    if (a == last)
       break;
     a += PGSIZE;
     pa += PGSIZE;
@@ -108,10 +128,10 @@ static struct kmap {
   uint phys_end;
   int perm;
 } kmap[] = {
- { (void*)KERNBASE, 0,             EXTMEM,    PTE_W}, // I/O space
- { (void*)KERNLINK, V2P(KERNLINK), V2P(data), 0},     // kern text+rodata
- { (void*)data,     V2P(data),     PHYSTOP,   PTE_W}, // kern data+memory
- { (void*)DEVSPACE, DEVSPACE,      0,         PTE_W}, // more devices
+ { (void*) KERNBASE, 0,             EXTMEM,    PTE_W}, // I/O space
+ { (void*) KERNLINK, V2P(KERNLINK), V2P(data), 0},     // kern text+rodata
+ { (void*) data,     V2P(data),     PHYSTOP,   PTE_W}, // kern data+memory
+ { (void*) DEVSPACE, DEVSPACE,      0,         PTE_W}, // more devices
 };
 
 // Set up kernel part of a page table.
@@ -121,17 +141,33 @@ setupkvm(void)
   pde_t *pgdir;
   struct kmap *k;
 
-  if((pgdir = (pde_t*)kalloc()) == 0)
+  // Allocate a page of memory for a new page directory table
+  if ((pgdir = (pde_t*) kalloc()) == 0)
     return 0;
+
   memset(pgdir, 0, PGSIZE);
-  if (P2V(PHYSTOP) > (void*)DEVSPACE)
+
+  // Sanity check:
+  // PHYSTOP should be below DEVSPACE, which is where I/O devices are defined
+  if (P2V(PHYSTOP) > (void*) DEVSPACE)
     panic("PHYSTOP too high");
-  for(k = kmap; k < &kmap[NELEM(kmap)]; k++)
-    if(mappages(pgdir, k->virt, k->phys_end - k->phys_start,
-                (uint)k->phys_start, k->perm) < 0) {
+
+  // Iterate through kmap[], assign pages to each section
+  // kmap: the table that defines the kernel's mappings
+  for (k = kmap; k < &kmap[NELEM(kmap)]; k++) {
+    // args:
+    // mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+    // mappages returns -1 if failure. Therefore on failure, setupkvm returns NULL
+    if (mappages(
+          pgdir, 
+          k->virt, 
+          k->phys_end - k->phys_start, 
+          (uint) k->phys_start, 
+          k->perm) < 0) {
       freevm(pgdir);
       return 0;
     }
+  }
   return pgdir;
 }
 

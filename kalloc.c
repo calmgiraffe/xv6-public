@@ -43,12 +43,17 @@ kinit2(void *vstart, void *vend)
   kmem.use_lock = 1;
 }
 
+// Frees the range of pages that correspond to the very next page after 'vstart'
+// and the page that 'vend' is inside. If the page that 'vstart' corresponds to
+// has code or data inside of it, it must not be freed. This function has the
+// effect of continuously adding to the front of the free list via kfree() calls
 void
 freerange(void *vstart, void *vend)
 {
   char *p;
-  p = (char*)PGROUNDUP((uint)vstart);
-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
+  p = (char*) PGROUNDUP((uint) vstart);
+  
+  for(; p + PGSIZE <= (char *) vend; p += PGSIZE)
     kfree(p);
 }
 //PAGEBREAK: 21
@@ -61,18 +66,25 @@ kfree(char *v)
 {
   struct run *r;
 
-  if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
+  // sanity check: v is page aligned, not in text or data, and less than PHYSTOP
+  if ((uint) v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
+  // The goal is that use-after-free results in a crash rather than a reference
+  // to previously kalloc'd code.
   memset(v, 1, PGSIZE);
 
-  if(kmem.use_lock)
+  // use_lock is a boolean that indicates whether a lock needs to be used
+  // At setup, a lock is not needed because we have a single CPU and irq disabled
+  if (kmem.use_lock) 
     acquire(&kmem.lock);
-  r = (struct run*)v;
+
+  r = (struct run*) v;
   r->next = kmem.freelist;
   kmem.freelist = r;
-  if(kmem.use_lock)
+
+  if (kmem.use_lock)
     release(&kmem.lock);
 }
 
@@ -84,13 +96,18 @@ kalloc(void)
 {
   struct run *r;
 
-  if(kmem.use_lock)
+  if (kmem.use_lock)
     acquire(&kmem.lock);
+
+  // If empty list, r = NULL. Therefore, kalloc will return NULL.
+  // This implies all calls to kalloc() should be paired with a NULL ptr check
   r = kmem.freelist;
-  if(r)
+  if (r)
     kmem.freelist = r->next;
-  if(kmem.use_lock)
+
+  if (kmem.use_lock)
     release(&kmem.lock);
-  return (char*)r;
+
+  return (char*) r;
 }
 

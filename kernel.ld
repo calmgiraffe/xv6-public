@@ -11,7 +11,10 @@ SECTIONS
         /* Must be equal to KERNLINK */
 	. = 0x80100000;
 
+	/* AT() is used to specify the physical address */
 	.text : AT(0x100000) {
+		/* this part tells the linker which files to include in this section */
+
 		*(.text .stub .text.* .gnu.linkonce.t.*)
 	}
 

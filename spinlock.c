@@ -25,7 +25,7 @@ void
 acquire(struct spinlock *lk)
 {
   pushcli(); // disable interrupts to avoid deadlock.
-  if(holding(lk))
+  if(holding(lk)) // check that not already holding lock
     panic("acquire");
 
   // The xchg is atomic.
@@ -76,6 +76,7 @@ getcallerpcs(void *v, uint pcs[])
 
   ebp = (uint*)v - 2;
   for(i = 0; i < 10; i++){
+    // if null ptr OR less than KERNBASE
     if(ebp == 0 || ebp < (uint*)KERNBASE || ebp == (uint*)0xffffffff)
       break;
     pcs[i] = ebp[1];     // saved %eip
@@ -108,19 +109,19 @@ pushcli(void)
 
   eflags = readeflags();
   cli();
-  if(mycpu()->ncli == 0)
-    mycpu()->intena = eflags & FL_IF;
+  if(mycpu()->ncli == 0) // ncli = num of cli 
+    mycpu()->intena = eflags & FL_IF; // if ncli == 0, save old int flag val
   mycpu()->ncli += 1;
 }
 
 void
 popcli(void)
 {
-  if(readeflags()&FL_IF)
+  if(readeflags()&FL_IF) // check that interrupts are not already enabled
     panic("popcli - interruptible");
-  if(--mycpu()->ncli < 0)
+  if(--mycpu()->ncli < 0) // decrement value of ncli, check that it does not become negative
     panic("popcli");
-  if(mycpu()->ncli == 0 && mycpu()->intena)
+  if(mycpu()->ncli == 0 && mycpu()->intena) // if interrupts were previously enabled
     sti();
 }
 

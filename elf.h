@@ -10,12 +10,12 @@ struct elfhdr {
   ushort machine;
   uint version;
   uint entry;
-  uint phoff;
-  uint shoff;
+  uint phoff; // start of program headers
+  uint shoff; // start of section headers
   uint flags;
   ushort ehsize;
   ushort phentsize;
-  ushort phnum;
+  ushort phnum; // number of program headers
   ushort shentsize;
   ushort shnum;
   ushort shstrndx;
@@ -24,10 +24,10 @@ struct elfhdr {
 // Program section header
 struct proghdr {
   uint type;
-  uint off;
+  uint off; // section offset
   uint vaddr;
   uint paddr;
-  uint filesz;
+  uint filesz; // section size
   uint memsz;
   uint flags;
   uint align;

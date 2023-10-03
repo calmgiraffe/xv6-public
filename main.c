@@ -17,6 +17,8 @@ extern char end[]; // first address after kernel loaded from ELF file
 int
 main(void)
 {
+  // 'end' refers to the first memory address after kernel code and data.
+  // The args for kinit1 imply that kernel code and data must be less than 4 MB.
   kinit1(end, P2V(4*1024*1024)); // phys page allocator
   kvmalloc();      // kernel page table
   mpinit();        // detect other processors

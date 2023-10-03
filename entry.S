@@ -24,7 +24,7 @@
 #include "param.h"
 
 # Multiboot header.  Data to direct multiboot loader.
-.p2align 2
+.p2align 2  # force 4B alignment
 .text
 .globl multiboot_header
 multiboot_header:
@@ -47,12 +47,13 @@ entry:
   movl    %cr4, %eax
   orl     $(CR4_PSE), %eax
   movl    %eax, %cr4
-  # Set page directory
+  # Set page directory, basic version with two entries
   movl    $(V2P_WO(entrypgdir)), %eax
   movl    %eax, %cr3
   # Turn on paging.
+  # PG = paging; WP = write protect, i.e. read only
   movl    %cr0, %eax
-  orl     $(CR0_PG|CR0_WP), %eax
+  orl     $(CR0_PG|CR0_WP), %eax 
   movl    %eax, %cr0
 
   # Set up the stack pointer.
@@ -65,4 +66,7 @@ entry:
   mov $main, %eax
   jmp *%eax
 
+# Declares a common block with a size of KSTACKSIZE.
+# A common block is a way to declaring a symbol without specifically allocating
+# it a location - 
 .comm stack, KSTACKSIZE
