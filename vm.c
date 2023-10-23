@@ -31,9 +31,9 @@ seginit(void)
   lgdt(c->gdt, sizeof(c->gdt));
 }
 
-// Return the address of the PTE in page table pgdir
-// that corresponds to virtual address va.  If alloc != 0,
-// create any required page table pages.
+// Returns a ptr to the PTE in page table pgdir
+// that corresponds to virtual address va.  If alloc,
+// create any required page tables.
 static pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
@@ -66,7 +66,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
-// be page-aligned.
+// be page-aligned. Returns 0 on success, -1 otherwise.
 static int
 mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 {
@@ -88,11 +88,12 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
     if (*pte & PTE_P)
       panic("remap");
 
-    // Permission gits for PTE and present flag
+    // Phys addr, permission gits for PTE, and present flag
     *pte = pa | perm | PTE_P;
 
     if (a == last)
       break;
+
     a += PGSIZE;
     pa += PGSIZE;
   }
@@ -191,18 +192,25 @@ switchkvm(void)
 // Switch TSS and h/w page table to correspond to process p.
 void
 switchuvm(struct proc *p)
-{
-  if(p == 0)
+{ 
+  // Do some basic sanity checks
+  if (p == 0)
     panic("switchuvm: no process");
-  if(p->kstack == 0)
+  if (p->kstack == 0)
     panic("switchuvm: no kstack");
-  if(p->pgdir == 0)
+  if (p->pgdir == 0)
     panic("switchuvm: no pgdir");
 
+  // Temporarily disable interrupts
   pushcli();
-  mycpu()->gdt[SEG_TSS] = SEG16(STS_T32A, &mycpu()->ts,
-                                sizeof(mycpu()->ts)-1, 0);
+
+  // mycpu() returns ptr to struct cpu.
+  // struct cpu has a GDT entry. Update this GDT with the same struct's
+  // task state ptr and privlege level 0.
+  mycpu()->gdt[SEG_TSS] = SEG16(STS_T32A, &mycpu()->ts, sizeof(mycpu()->ts)-1, 0);
   mycpu()->gdt[SEG_TSS].s = 0;
+  // The GDT now points to the task state.
+  // Store a segment selector and the stack pointer in the task state.
   mycpu()->ts.ss0 = SEG_KDATA << 3;
   mycpu()->ts.esp0 = (uint)p->kstack + KSTACKSIZE;
   // setting IOPL=0 in eflags *and* iomb beyond the tss segment limit
@@ -210,6 +218,8 @@ switchuvm(struct proc *p)
   mycpu()->ts.iomb = (ushort) 0xFFFF;
   ltr(SEG_TSS << 3);
   lcr3(V2P(p->pgdir));  // switch to process's address space
+
+  // Enable interrupts
   popcli();
 }
 
@@ -220,10 +230,14 @@ inituvm(pde_t *pgdir, char *init, uint sz)
 {
   char *mem;
 
-  if(sz >= PGSIZE)
+  if(sz >= PGSIZE) // function only sets up first page
     panic("inituvm: more than a page");
-  mem = kalloc();
+
+  // Allocate a fresh page of memory and clear it
+  mem = kalloc(); 
   memset(mem, 0, PGSIZE);
+
+  // Create a mapping for va 0 using the new page, then move the data from init
   mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U);
   memmove(mem, init, sz);
 }
@@ -236,17 +250,24 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
   uint i, pa, n;
   pte_t *pte;
 
-  if((uint) addr % PGSIZE != 0)
+  // Sanity check: destination va must be page aligned
+  if ((uint) addr % PGSIZE != 0)
     panic("loaduvm: addr must be page aligned");
-  for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walkpgdir(pgdir, addr+i, 0)) == 0)
+
+  // Iterate from addr to addr + sz
+  for (i = 0; i < sz; i += PGSIZE) {
+    // Get the pte for addr.
+    // Another function previously allocates the required pages.
+    if ((pte = walkpgdir(pgdir, addr+i, 0)) == 0)
       panic("loaduvm: address should exist");
+
     pa = PTE_ADDR(*pte);
-    if(sz - i < PGSIZE)
+    if (sz - i < PGSIZE) // If remaining size is less than PGSIZE, change n
       n = sz - i;
     else
       n = PGSIZE;
-    if(readi(ip, P2V(pa), offset+i, n) != n)
+
+    if (readi(ip, P2V(pa), offset+i, n) != n)
       return -1;
   }
   return 0;
@@ -260,21 +281,31 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   char *mem;
   uint a;
 
-  if(newsz >= KERNBASE)
+  // Sanity check: don't grow into kernel space
+  if (newsz >= KERNBASE)
     return 0;
-  if(newsz < oldsz)
+
+  // Sanity check: newsz should be at least oldsz
+  if (newsz < oldsz)
     return oldsz;
 
   a = PGROUNDUP(oldsz);
-  for(; a < newsz; a += PGSIZE){
+  for (; a < newsz; a += PGSIZE) {
+    // Get (virt addr) ptr to new 4K page. Check for NULL ptr, 
+    // reverse changes with deallocuvm() if kalloc() fails
     mem = kalloc();
-    if(mem == 0){
+    if (mem == 0) {
       cprintf("allocuvm out of memory\n");
       deallocuvm(pgdir, newsz, oldsz);
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+
+    // Create a mapping in the process pgdir. mem is a ptr to a 4K page. Since 
+    // mem is a kernel space address, pa can be easily found with V2P().
+    // walkpgdir will return a ptr to a page table entry 'pte'. Then,
+    // 'pte' is deferenced and (pa | perm | present flag) written
+    if (mappages(pgdir, (char *) a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0) {
       cprintf("allocuvm out of memory (2)\n");
       deallocuvm(pgdir, newsz, oldsz);
       kfree(mem);
@@ -294,18 +325,27 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   pte_t *pte;
   uint a, pa;
 
-  if(newsz >= oldsz)
+  // Sanity check: make sure newsz < oldsz
+  if (newsz >= oldsz)
     return oldsz;
 
+  // Get the 'address' of the first page above newsz
+  // Note: 'a < oldsz' is due to zero indexing of addresses
+  // Recall: page directory has 1024 entries.
   a = PGROUNDUP(newsz);
-  for(; a  < oldsz; a += PGSIZE){
-    pte = walkpgdir(pgdir, (char*)a, 0);
-    if(!pte)
+  for (; a < oldsz; a += PGSIZE) {
+    pte = walkpgdir(pgdir, (char *) a, 0);
+
+    // if NULL ptr, page table does not exist, so skip ahead to the next page
+    // dir entry. Subtract PGSIZE to cancel the for-loop's update statement.
+    if (!pte)
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
-    else if((*pte & PTE_P) != 0){
-      pa = PTE_ADDR(*pte);
-      if(pa == 0)
+
+    else if ((*pte & PTE_P) != 0) { // check that the pte is actually present
+      pa = PTE_ADDR(*pte); // extract the pa; bits 31..12
+      if (pa == 0)
         panic("kfree");
+
       char *v = P2V(pa);
       kfree(v);
       *pte = 0;
@@ -321,12 +361,17 @@ freevm(pde_t *pgdir)
 {
   uint i;
 
-  if(pgdir == 0)
+  if (pgdir == 0)
     panic("freevm: no pgdir");
-  deallocuvm(pgdir, KERNBASE, 0);
-  for(i = 0; i < NPDENTRIES; i++){
-    if(pgdir[i] & PTE_P){
-      char * v = P2V(PTE_ADDR(pgdir[i]));
+
+  deallocuvm(pgdir, KERNBASE, 0); // oldsz = user vm size (KERNBASE)
+  for (i = 0; i < NPDENTRIES; i++) {
+    // Iterate through page directory entries.
+    // If the page directory entry exists, kfree the page for the page table
+    // Note: the actual pages for the process (page table entries) are cleared
+    // as a result of deallocuvm()
+    if (pgdir[i] & PTE_P) {
+      char *v = P2V(PTE_ADDR(pgdir[i]));
       kfree(v);
     }
   }
@@ -340,15 +385,16 @@ clearpteu(pde_t *pgdir, char *uva)
 {
   pte_t *pte;
 
-  pte = walkpgdir(pgdir, uva, 0);
-  if(pte == 0)
+  pte = walkpgdir(pgdir, uva, 0); // get pte for uva
+  if (pte == 0)
     panic("clearpteu");
-  *pte &= ~PTE_U;
+
+  *pte &= ~PTE_U; // clear flag
 }
 
-// Given a parent process's page table, create a copy
-// of it for a child.
-pde_t*
+// Given a parent process's page directory, create a copy
+// of this pgedir for a child process.
+pde_t* 
 copyuvm(pde_t *pgdir, uint sz)
 {
   pde_t *d;
@@ -356,19 +402,31 @@ copyuvm(pde_t *pgdir, uint sz)
   uint pa, i, flags;
   char *mem;
 
-  if((d = setupkvm()) == 0)
+  // Set up kernel part of the new address space.
+  // All processes have the same kernel mappings.
+  if ((d = setupkvm()) == 0) 
     return 0;
-  for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
+
+  // Iterate over parent process's address space, 0 to sz.
+  // proc.c: copyuvm(curproc->pgdir, curproc->sz)
+  for (i = 0; i < sz; i += PGSIZE) {
+    if ((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
+
+    if (!(*pte & PTE_P))
       panic("copyuvm: page not present");
+
+    // Get the pa and flags from the parent pte.
+    // Then, get ptr to a kernel page for the child pte
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    if ((mem = kalloc()) == 0) 
       goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
+
+    // Copy bytes from parent to child page.
+    // Then, stick this newly alloc'd child page into its own page directory 'd'
+    memmove(mem, (char*) P2V(pa), PGSIZE);
+    if (mappages(d, (void *) i, PGSIZE, V2P(mem), flags) < 0) {
       kfree(mem);
       goto bad;
     }
@@ -382,17 +440,20 @@ bad:
 
 //PAGEBREAK!
 // Map user virtual address to kernel address.
+// This function only gets called by copyout(), which only gets called by exec().
+// exec() gets called by sys_exec(), the shell, and the initial userspace program
 char*
 uva2ka(pde_t *pgdir, char *uva)
 {
   pte_t *pte;
 
-  pte = walkpgdir(pgdir, uva, 0);
-  if((*pte & PTE_P) == 0)
+  pte = walkpgdir(pgdir, uva, 0); // note: no NULL check
+  if ((*pte & PTE_P) == 0)
     return 0;
-  if((*pte & PTE_U) == 0)
+  if ((*pte & PTE_U) == 0)
     return 0;
-  return (char*)P2V(PTE_ADDR(*pte));
+
+  return (char*) P2V(PTE_ADDR(*pte));
 }
 
 // Copy len bytes from p to user address va in page table pgdir.
@@ -404,16 +465,23 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   char *buf, *pa0;
   uint n, va0;
 
-  buf = (char*)p;
-  while(len > 0){
-    va0 = (uint)PGROUNDDOWN(va);
-    pa0 = uva2ka(pgdir, (char*)va0);
-    if(pa0 == 0)
+  buf = (char *) p;
+  while (len > 0) {
+    va0 = (uint) PGROUNDDOWN(va); // get page aligned va
+    pa0 = uva2ka(pgdir, (char*) va0); // get kernel virtual address for va
+
+    if (pa0 == 0)
       return -1;
-    n = PGSIZE - (va - va0);
-    if(n > len)
+
+    // length of data is PGSIZE - amount that was pgrounded down
+    // if last page, copy len bytes -- len is the amount of B remaining to copy
+    n = PGSIZE - (va - va0); 
+    if (n > len)
       n = len;
+
+    // copy from buf into target userspace va
     memmove(pa0 + (va - va0), buf, n);
+
     len -= n;
     buf += n;
     va = va0 + PGSIZE;
