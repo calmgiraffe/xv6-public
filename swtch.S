@@ -18,8 +18,8 @@ swtch:
   pushl %edi
 
   # Switch stacks
-  movl %esp, (%eax)
-  movl %edx, %esp
+  movl %esp, (%eax) # Save a ptr to old struct context into *old
+  movl %edx, %esp # Switch stacks to the new context, which is in edx
 
   # Load new callee-saved registers
   popl %edi

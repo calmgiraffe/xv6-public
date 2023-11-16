@@ -11,6 +11,8 @@ alltraps:
   pushal
   
   # Set up data segments.
+  # The data segment registers are set to SEG_KDATA<<3, which refers to the
+  # kernel data segment.
   movw $(SEG_KDATA<<3), %ax
   movw %ax, %ds
   movw %ax, %es

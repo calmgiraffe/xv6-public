@@ -14,14 +14,18 @@
 // to a saved program counter, and then the first argument.
 
 // Fetch the int at addr from the current process.
+// Only called in one other place.
 int
 fetchint(uint addr, int *ip)
 {
   struct proc *curproc = myproc();
 
-  if(addr >= curproc->sz || addr+4 > curproc->sz)
+  // Check that the integer is inside the process's address space
+  if (addr >= curproc->sz || addr+4 > curproc->sz)
     return -1;
-  *ip = *(int*)(addr);
+
+  // Dereference addr and store in ip
+  *ip = *(int *)(addr);
   return 0;
 }
 
@@ -34,18 +38,23 @@ fetchstr(uint addr, char **pp)
   char *s, *ep;
   struct proc *curproc = myproc();
 
-  if(addr >= curproc->sz)
+  // Make sure the ptr is in a valid address
+  if (addr >= curproc->sz)
     return -1;
-  *pp = (char*)addr;
-  ep = (char*)curproc->sz;
-  for(s = *pp; s < ep; s++){
-    if(*s == 0)
+
+  *pp = (char*) addr;
+  ep = (char*) curproc->sz;
+  // Scan for a nul byte inside process's address space
+  for (s = *pp; s < ep; s++) {
+    if (*s == 0)
       return s - *pp;
   }
+  // String is not null-terminated, return err
   return -1;
 }
 
 // Fetch the nth 32-bit system call argument.
+// Used by sys_ functions to recover an integer arg.
 int
 argint(int n, int *ip)
 {
@@ -61,11 +70,14 @@ argptr(int n, char **pp, int size)
   int i;
   struct proc *curproc = myproc();
  
-  if(argint(n, &i) < 0)
+  if (argint(n, &i) < 0)
     return -1;
-  if(size < 0 || (uint)i >= curproc->sz || (uint)i+size > curproc->sz)
+  // Make sure that ptr is valid, that the size is non-neg and the beginning and
+  // end of the memory block it points to are both in the process's address space
+  if (size < 0 || (uint)i >= curproc->sz || (uint)i+size > curproc->sz)
     return -1;
-  *pp = (char*)i;
+
+  *pp = (char*) i;
   return 0;
 }
 
@@ -77,7 +89,7 @@ int
 argstr(int n, char **pp)
 {
   int addr;
-  if(argint(n, &addr) < 0)
+  if (argint(n, &addr) < 0)
     return -1;
   return fetchstr(addr, pp);
 }
@@ -135,7 +147,8 @@ syscall(void)
   struct proc *curproc = myproc();
 
   num = curproc->tf->eax;
-  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+  // Check that the syscall number is between 1 and 21
+  if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     curproc->tf->eax = syscalls[num]();
   } else {
     cprintf("%d %s: unknown sys call %d\n",
