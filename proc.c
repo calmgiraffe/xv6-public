@@ -348,7 +348,7 @@ scheduler(void)
   struct cpu *c = mycpu();
   c->proc = 0; // set current cpu's process pointer to be null
   
-  for(;;) {
+  for (;;) {
     // Enable interrupts on this processor.
     sti();
 
@@ -356,7 +356,7 @@ scheduler(void)
     acquire(&ptable.lock);
 
     // Iterate over process table, looking for a RUNNABLE process
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
         continue;
 
