@@ -6,11 +6,17 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "pstat.h"
 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
+
+static uint totalTickets = 0;
+//static const uint m = 0x0 - 1;
+//static const uint a = 1664525;
+//static const uint c = 1013904223;
 
 static struct proc *initproc; // ptr to first process
 
@@ -160,6 +166,8 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  p->tickets = 1;
+  totalTickets += 1;
 
   release(&ptable.lock);
 }
@@ -196,13 +204,14 @@ fork(void)
   struct proc *curproc = myproc(); // parent 
 
   // Create a slot in the process table for the child process.
-  if((np = allocproc()) == 0){
+  // Right after this point, np is at EMBYRO state
+  if((np = allocproc()) == 0) {
     return -1;
   }
 
   // Copy parent's pgdir. If copyuvm fails, free the kernel stack and
   // set child process state to UNUSED.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+  if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -231,6 +240,8 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  np->tickets = curproc->tickets; // inherit parent tickets
+  totalTickets += curproc->tickets;
 
   release(&ptable.lock);
 
@@ -305,7 +316,7 @@ wait(void)
         continue;
 
       havekids = 1;
-      if (p->state == ZOMBIE) {
+      if (p->state == ZOMBIE) { // reap child zombie, was previously exit()'d
         // Found one.
         pid = p->pid;
         kfree(p->kstack); // free kernel stack
@@ -316,6 +327,9 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
+        totalTickets -= p->tickets; // ticket count decreases upon reaping
+        p->tickets = 0;
+        p->ticks = 0;
         release(&ptable.lock);
         return pid;
       }
@@ -357,7 +371,7 @@ scheduler(void)
 
     // Iterate over process table, looking for a RUNNABLE process
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-      if(p->state != RUNNABLE)
+      if (p->state != RUNNABLE)
         continue;
 
       // Switch to chosen process.  It is the process's job
@@ -366,6 +380,7 @@ scheduler(void)
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
+      p->ticks += 1;
 
       swtch(&(c->scheduler), p->context);
 
@@ -575,4 +590,51 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+/* user-added syscalls as part of OSTEP scheduling project */
+
+// Sets the number of tickets for the calling process.
+// Return -1 if setting tickets for a non-RUNNING and thus non-valid proc.
+// Else, return 0 on success.
+int
+settickets(int tickets) {
+  struct proc *curproc = myproc();
+  
+  // non-zero ticket numbers for a non-RUNNING state are not valid
+  if (curproc->state != RUNNING)
+    panic("syscall made by non-RUNNING process");
+  
+  if (tickets < 1)
+    return -1;
+
+  acquire(&ptable.lock);
+  totalTickets += (tickets - curproc->tickets);
+  curproc->tickets = tickets;
+  release(&ptable.lock);
+
+  return 0;
+}
+
+int
+getpinfo(struct pstat *ps) {
+  struct proc *p;
+  int i = 0;
+
+  if (ps == 0) // NULL ptr
+    return -1;
+
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    
+    ps->inuse[i] = !(p->state == UNUSED);
+    ps->tickets[i] = p->tickets;
+    ps->pid[i] = p->pid;
+    ps->ticks[i] = p->ticks;
+    i++;
+  }
+  //cprintf("total tickets = %d\n", totalTickets);
+  release(&ptable.lock);
+
+  return 0;
 }

@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
+#include "pstat.h"
 
 int
 sys_fork(void)
@@ -81,7 +82,7 @@ sys_sleep(void)
       return -1;
     } 
     // will release and reacquire the lock so sleeping process doesn't hog the lock
-    sleep(&ticks, &tickslock);
+  	sleep(&ticks, &tickslock);
   }
 
   release(&tickslock);
@@ -99,4 +100,28 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+/* user-added syscalls as part of OSTEP scheduling project */
+
+int
+sys_settickets(void) {
+  int n;
+
+	// Check that the integer is inside the process's address space
+  if (argint(0, &n) < 0) {
+		return -1;
+  }
+  return settickets(n);
+}
+
+int 
+sys_getpinfo(void) {
+	char *p;
+
+	// argptr effectively returns the passed-in ptr back to the caller
+	if (argptr(0, &p, sizeof(struct pstat)) < 0) {
+		return -1;
+	}
+	return getpinfo((struct pstat *) p);
 }
