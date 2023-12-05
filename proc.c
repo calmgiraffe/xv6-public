@@ -7,17 +7,14 @@
 #include "proc.h"
 #include "spinlock.h"
 #include "pstat.h"
+#include "random.h"
 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
 
-static uint totalTickets = 0;
-//static const uint m = 0x0 - 1;
-//static const uint a = 1664525;
-//static const uint c = 1013904223;
-
+static uint totalTickets = 1; // set to 1 to prevent modulo 0 bug in scheduler()
 static struct proc *initproc; // ptr to first process
 
 int nextpid = 1; // global counter for pids
@@ -167,7 +164,7 @@ userinit(void)
 
   p->state = RUNNABLE;
   p->tickets = 1;
-  totalTickets += 1;
+  //totalTickets += 1;
 
   release(&ptable.lock);
 }
@@ -360,8 +357,13 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  uint state = 123456789; // seed
+  uint adjustedDraw;
+  uint counter = 0;
   c->proc = 0; // set current cpu's process pointer to be null
   
+
+  // Kernel should loop forever here.
   for (;;) {
     // Enable interrupts on this processor.
     sti();
@@ -369,30 +371,46 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
 
+    // Generate new random number of tickets to draw. // min = 1, max = totalTickets
+    // Reset the counter.
+    adjustedDraw = (xorshift32(&state) % totalTickets) + 1;
+    counter = 0;
+
     // Iterate over process table, looking for a RUNNABLE process
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-      if (p->state != RUNNABLE)
+      if (p->state != RUNNABLE) {
+        /* Below line seems logically correct, but results are disproportionate
+        with it uncommented. */
+        adjustedDraw -= p->tickets;
         continue;
+      }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
-      p->ticks += 1;
+      // Else: process is RUNNABLE
+      counter += p->tickets;
+      if (counter >= adjustedDraw) {
+        //cprintf("%d %d\n", adjustedDraw, totalTickets);
 
-      swtch(&(c->scheduler), p->context);
+        // Switch to chosen process.  It is the process's job
+        // to release ptable.lock and then reacquire it
+        // before jumping back to us.
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        p->ticks += 1;
 
-      // Execution will eventually return here with another swtch call but with
-      // arguments in reverse, so switch back to kernel pgdir
-      switchkvm();
+        swtch(&(c->scheduler), p->context);
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+        // Execution will eventually return here with another swtch call but with
+        // arguments in reverse, so switch back to kernel pgdir
+        switchkvm();
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+
+        break;
+      }
     }
-
     release(&ptable.lock);
   }
 }
@@ -572,6 +590,7 @@ procdump(void)
   char *state;
   uint pc[10];
 
+  //cprintf("total tickets = %d\n", totalTickets);
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->state == UNUSED)
       continue;
@@ -580,7 +599,7 @@ procdump(void)
     else
       state = "???";
 
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s %d %d", p->pid, state, p->name, p->ticks, p->tickets);
 
     // If process is sleeping, print out its call stack
     if (p->state == SLEEPING) { 
@@ -626,14 +645,12 @@ getpinfo(struct pstat *ps) {
 
   acquire(&ptable.lock);
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    
     ps->inuse[i] = !(p->state == UNUSED);
     ps->tickets[i] = p->tickets;
     ps->pid[i] = p->pid;
     ps->ticks[i] = p->ticks;
     i++;
   }
-  //cprintf("total tickets = %d\n", totalTickets);
   release(&ptable.lock);
 
   return 0;

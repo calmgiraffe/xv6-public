@@ -1,19 +1,21 @@
-#include "types.h"
+#include "random.h"
 #include "user.h"
-#include "pstat.h"
+
+void testProcess(int tickets) {
+    settickets(tickets);
+    while (1);
+}
 
 int main(int argc, char *argv[]) {
-    settickets(atoi(argv[1])); // will invoke sys_setickets
+    int pid1, pid2, pid3;
     
-    struct pstat ps;
-    getpinfo(&ps);
-    
-    for (int i = 0; i < NPROC; i++) {
-        if (ps.inuse[i]) {
-            printf(1, "tickets: %d; pid: %d; ticks: %d\n", 
-            ps.tickets[i], ps.pid[i], ps.ticks[i]);
-        }
+    if ((pid1 = fork()) == 0) {
+        testProcess(20); 
+    } else if ((pid2 = fork()) == 0) {
+        testProcess(30);
+    } else if ((pid3 = fork()) == 0) {
+        testProcess(40);
     }
-
+        
     exit();
 }
