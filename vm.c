@@ -73,7 +73,7 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   char *a, *last;
   pte_t *pte;
 
-  // Get ptrs to start of first and last pages to
+  // Get ptrs to start of first and last pages to map
   a = (char*) PGROUNDDOWN((uint) va);
   last = (char*) PGROUNDDOWN(((uint) va) + size - 1);
 
@@ -242,7 +242,7 @@ inituvm(pde_t *pgdir, char *init, uint sz)
   memmove(mem, init, sz);
 }
 
-// Load a program segment into pgdir.  addr must be page-aligned
+// Load a program segment into pgdir. addr must be page-aligned
 // and the pages from addr to addr+sz must already be mapped.
 int
 loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
@@ -253,6 +253,9 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
   // Sanity check: destination va must be page aligned
   if ((uint) addr % PGSIZE != 0)
     panic("loaduvm: addr must be page aligned");
+
+  // Debugging
+  //cprintf("addr = %x, offset = %x, sz = %x\n\n" , addr, offset, sz);
 
   // Iterate from addr to addr + sz
   for (i = 0; i < sz; i += PGSIZE) {
@@ -299,6 +302,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       deallocuvm(pgdir, newsz, oldsz);
       return 0;
     }
+    // Clear the page with 0's
     memset(mem, 0, PGSIZE);
 
     // Create a mapping in the process pgdir. mem is a ptr to a 4K page. Since 
@@ -409,7 +413,9 @@ copyuvm(pde_t *pgdir, uint sz)
 
   // Iterate over parent process's address space, 0 to sz.
   // proc.c: copyuvm(curproc->pgdir, curproc->sz)
-  for (i = 0; i < sz; i += PGSIZE) {
+  // Note: sz is the memory footprint of the process, typically rounded up
+  // Note: first page invalid. Starting here better than removing second panic
+  for (i = PGSIZE; i < sz; i += PGSIZE) {
     if ((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
 

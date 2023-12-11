@@ -202,7 +202,7 @@ fork(void)
 
   // Copy parent's pgdir. If copyuvm fails, free the kernel stack and
   // set child process state to UNUSED.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+  if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;

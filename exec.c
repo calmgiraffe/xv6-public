@@ -39,21 +39,36 @@ exec(char *path, char **argv)
     goto bad;
 
   // Load program into memory.
-  sz = 0;
-  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
-    if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
+  // Iterate through ELF headers. The number of headers is specified by elf.phnum
+  // 'sz' = size of the total memory space. Includes text, data, guard page, stack
+  // Note: sz set to PGSIZE to make first page invalid
+  sz = PGSIZE;
+  for (i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)){
+    // ph = struct proghrd* 
+    // Load each program header into ph.
+    // Fails if doesn't read expected number of bytes.
+    if (readi(ip, (char *) &ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
-    if(ph.type != ELF_PROG_LOAD)
+    if (ph.type != ELF_PROG_LOAD)
       continue;
-    if(ph.memsz < ph.filesz)
+
+    /* Sanity checks */
+    // ph.memsz = size of segment in memory
+    // ph.filesz = size of segment on the file
+    // if ph.memsz < ph.filesz, that implies not enough memory to store segment
+    if (ph.memsz < ph.filesz)
       goto bad;
-    if(ph.vaddr + ph.memsz < ph.vaddr)
+    if (ph.vaddr + ph.memsz < ph.vaddr)
       goto bad;
-    if((sz = allocuvm(pgdir, sz, ph.vaddr + ph.memsz)) == 0)
+
+    if ((sz = allocuvm(pgdir, sz, ph.vaddr + ph.memsz)) == 0)
       goto bad;
-    if(ph.vaddr % PGSIZE != 0)
+    if (ph.vaddr % PGSIZE != 0)
       goto bad;
-    if(loaduvm(pgdir, (char*)ph.vaddr, ip, ph.off, ph.filesz) < 0)
+
+    // Debugging
+    //cprintf("sz = %x, ph.vaddr = %x, ph.memsz = %x\n", sz, ph.vaddr, ph.memsz);
+    if (loaduvm(pgdir, (char*) ph.vaddr, ip, ph.off, ph.filesz) < 0)
       goto bad;
   }
   iunlockput(ip);
