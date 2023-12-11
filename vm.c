@@ -496,3 +496,17 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 //PAGEBREAK!
 // Blank page.
 
+/* Change the protection bits of the page range starting at addr and of len
+pages to be read-only. Thus, reads are allowed, but writes should cause a trap
+and kill the process. */
+int
+mprotect(void *addr, int len) {
+  // Check that addr is page aligned
+  return 0;
+}
+
+/* Opposite of mprotect -- set the page range to readable and writable */
+int munprotect(void *addr, int len) {
+  // Check that addr is page aligned
+  return 0;
+}

@@ -27,6 +27,7 @@ OBJS = \
 	uart.o\
 	vectors.o\
 	vm.o\
+	sysvm.o\
 
 # Cross-compiling (e.g., on Mac OS X)
 TOOLPREFIX = i686-linux-gnu-
@@ -145,6 +146,7 @@ vectors.S: vectors.pl
 
 ULIB = ulib.o usys.o printf.o umalloc.o
 
+# vm-xv6: need to change -Ttext argument to align to next page
 _%: %.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 	$(OBJDUMP) -S $@ > $*.asm
@@ -181,6 +183,7 @@ UPROGS=\
 	_usertests\
 	_wc\
 	_zombie\
+	_test\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
