@@ -41,8 +41,7 @@ exec(char *path, char **argv)
   // Load program into memory.
   // Iterate through ELF headers. The number of headers is specified by elf.phnum
   // 'sz' = size of the total memory space. Includes text, data, guard page, stack
-  // Note: sz set to PGSIZE to make first page invalid
-  sz = PGSIZE;
+  sz = 0;
   for (i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)){
     // ph = struct proghrd* 
     // Load each program header into ph.
@@ -71,6 +70,7 @@ exec(char *path, char **argv)
     if (loaduvm(pgdir, (char*) ph.vaddr, ip, ph.off, ph.filesz) < 0)
       goto bad;
   }
+  clearpteu(pgdir, 0); // Makes the first page incessible to userspace
   iunlockput(ip);
   end_op();
   ip = 0;
@@ -116,6 +116,8 @@ exec(char *path, char **argv)
   curproc->tf->esp = sp;
   switchuvm(curproc);
   freevm(oldpgdir);
+
+  //cprintf("%s size: 0x%x\n", curproc->name, curproc->sz);
   return 0;
 
  bad:

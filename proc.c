@@ -137,8 +137,10 @@ userinit(void)
   p = allocproc();
   
   initproc = p;
-  if((p->pgdir = setupkvm()) == 0)
+  if ((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
+
+  // _binary_initcode_start = 8010a460 (kernel address)
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
   p->sz = PGSIZE;
   memset(p->tf, 0, sizeof(*p->tf));
@@ -311,7 +313,7 @@ wait(void)
         kfree(p->kstack); // free kernel stack
         p->kstack = 0;
         freevm(p->pgdir); // free pgdir
-        p->pid = 0; // reset the struct proc (p-> instructions)
+        p->pid = 0;       // reset the struct proc (p-> instructions)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
@@ -565,7 +567,7 @@ procdump(void)
     else
       state = "???";
 
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("%d %s %s %x", p->pid, state, p->name, p->sz);
 
     // If process is sleeping, print out its call stack
     if (p->state == SLEEPING) { 

@@ -32,7 +32,7 @@ seginit(void)
 }
 
 // Returns a ptr to the PTE in page table pgdir
-// that corresponds to virtual address va.  If alloc,
+// that corresponds to virtual address va. If alloc,
 // create any required page tables.
 static pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
@@ -223,8 +223,12 @@ switchuvm(struct proc *p)
   popcli();
 }
 
-// Load the initcode into address 0 of pgdir.
+// Load the initcode.S into address 0 of pgdir.
 // sz must be less than a page.
+// Called only in userinit().
+// Note, VA starts from 0. This is the only process that does this.
+// initcode.S immediately exits after execing init.
+// init VA starts from 0x1000.
 void
 inituvm(pde_t *pgdir, char *init, uint sz)
 {
@@ -414,8 +418,8 @@ copyuvm(pde_t *pgdir, uint sz)
   // Iterate over parent process's address space, 0 to sz.
   // proc.c: copyuvm(curproc->pgdir, curproc->sz)
   // Note: sz is the memory footprint of the process, typically rounded up
-  // Note: first page invalid. Starting here better than removing second panic
-  for (i = PGSIZE; i < sz; i += PGSIZE) {
+  // Note: first page made inaccessible to user space
+  for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
 
@@ -502,17 +506,73 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 //PAGEBREAK!
 // Blank page.
 
+// Clears or sets PTE_W on a page.
+void
+togglepte_w(pde_t *pgdir, char *uva, int set) {
+  pte_t *pte;
+
+  pte = walkpgdir(pgdir, uva, 0); // get pte for uva
+  if (pte == 0)
+    panic("clearpteu");
+
+  if (set) 
+    *pte |= PTE_W; // set flag
+  else 
+    *pte &= ~PTE_W; // clear flag
+}
+
+
 /* Change the protection bits of the page range starting at addr and of len
 pages to be read-only. Thus, reads are allowed, but writes should cause a trap
 and kill the process. */
 int
 mprotect(void *addr, int len) {
-  // Check that addr is page aligned
+  struct proc *curproc = myproc();
+
+  // if not page aligned
+  if ((uint) addr & (PGSIZE-1)) 
+    return -1;
+
+  if (len < 0)
+    return -1;
+
+  // Check that iteration range doesn't exceed the process size.
+  // By convention, the sz of a process is always rounded up to the next page.
+  if (((uint) addr + len*PGSIZE) > (curproc->sz))
+    return -1;
+
+  void *va = addr;
+  for (int i = 0; i < len; i++) {
+    togglepte_w(curproc->pgdir, va, 0);
+    va += PGSIZE;
+  }
+
+  lcr3(V2P(curproc->pgdir));
   return 0;
 }
 
 /* Opposite of mprotect -- set the page range to readable and writable */
 int munprotect(void *addr, int len) {
-  // Check that addr is page aligned
+  struct proc *curproc = myproc();
+
+  // if not page aligned
+  if ((uint) addr & (PGSIZE-1)) 
+    return -1;
+
+  if (len < 0)
+    return -1;
+
+  // Check that iteration range doesn't exceed the process size.
+  // By convention, the sz of a process is always rounded up to the next page.
+  if (((uint) addr + len*PGSIZE) > (curproc->sz))
+    return -1;
+
+  void *va = addr;
+  for (int i = 0; i < len; i++) {
+    togglepte_w(curproc->pgdir, va, 1);
+    va += PGSIZE;
+  }
+  
+  lcr3(V2P(curproc->pgdir));
   return 0;
 }
