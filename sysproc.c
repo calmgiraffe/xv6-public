@@ -105,7 +105,6 @@ sys_uptime(void)
 /* kthreads project addition */
 int
 sys_clone(void) {
-  cprintf("sys_clone\n");
   char *fcn, *arg1, *arg2, *stack;
   int ret0, ret1, ret2, ret3;
 
@@ -123,7 +122,6 @@ sys_clone(void) {
 
 int
 sys_join(void) {
-  cprintf("sys_join\n");
   char *stackptr;
   
   // User passes in address of ptr in join(), which then goes on the stack

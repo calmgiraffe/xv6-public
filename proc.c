@@ -556,6 +556,8 @@ clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack) {
   *np->tf = *curproc->tf;
 
   // clone() specific code: set up initial stack state
+  // For stack layout, see:
+  // https://eli.thegreenplace.net/2011/02/04/where-the-top-of-the-stack-is-on-x86/
   uint *sp = stack;
   *sp = (uint) arg2;
   sp--;

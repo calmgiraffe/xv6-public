@@ -4,8 +4,7 @@
 #define NULL 0
 #define PAGESIZE 4096
 
-
-void thr_proc(void *arg1, void *arg2) {
+void thr_proc1(void *arg1, void *arg2) {
     int *a = (int *) arg1;
     int *b = (int *) arg2;
 
@@ -17,14 +16,10 @@ void thr_proc(void *arg1, void *arg2) {
 
 /* Testing/debugging of the features added in kthreads project */
 int main(int argc, char *argv[]) {
-    int arg1 = 111, arg2 = 222;
-    void *stack = malloc(PAGESIZE);
+    int arg1 = 12, arg2 = 34;
 
-    int ret = clone(thr_proc, &arg1, &arg2, ((char*) stack) + PAGESIZE - sizeof(uint));
-    
-    join(&stack);
-    free(stack);
-    printf(1, "clone() ret val: %d\n", ret);
+    int chd_pid1 = thread_create(thr_proc1, &arg1, &arg2);
+    thread_join(chd_pid1);
 
     exit(); // main() needs to end with this
 }
