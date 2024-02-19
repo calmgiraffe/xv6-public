@@ -100,3 +100,38 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+/* kthreads project addition */
+int
+sys_clone(void) {
+  cprintf("sys_clone\n");
+  char *fcn, *arg1, *arg2, *stack;
+  int ret0, ret1, ret2, ret3;
+
+  ret0 = argptr(0, &fcn, sizeof(void *));
+  ret1 = argptr(1, &arg1, sizeof(void *));
+  ret2 = argptr(2, &arg2, sizeof(void *));
+  ret3 = argptr(3, &stack, sizeof(void *));
+  
+  // All return vals should be 0 if correct
+  if (ret0 | ret1 | ret2 | ret3)
+    return -1;
+  
+  return clone((void (*)(void*, void*)) fcn, arg1, arg2, stack);
+}
+
+int
+sys_join(void) {
+  cprintf("sys_join\n");
+  char *stackptr;
+  
+  // User passes in address of ptr in join(), which then goes on the stack
+  // The value on stack is then copied to stackptr
+  if (argptr(0, &stackptr, sizeof(void *)) < 0)
+    return -1;
+  
+  // stackptr contains the address of the pointer (ptr to ptr)
+  return join((void **) stackptr);
+}
+/* kthreads project addition end */

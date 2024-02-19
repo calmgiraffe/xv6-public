@@ -537,6 +537,103 @@ kill(int pid)
   return -1; // no PID match found
 }
 
+
+/* kthreads project addition */
+int
+clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack) {
+  int i, pid;
+  struct proc *np; // child 
+  struct proc *curproc = myproc(); // parent 
+
+  // Create a slot in the process table for the child process.
+  if ((np = allocproc()) == 0)
+    return -1;
+  
+  // Child thread will share parent's address space
+  np->pgdir = curproc->pgdir;
+  np->sz = curproc->sz;
+  np->parent = curproc;
+  *np->tf = *curproc->tf;
+
+  // clone() specific code: set up initial stack state
+  uint *sp = stack;
+  *sp = (uint) arg2;
+  sp--;
+  *sp = (uint) arg1;
+  sp--;
+  *sp = (uint) 0xffffffff; // dummy return address
+  np->tf->esp = (uint) sp;  // stack reg
+  np->tf->eip = (uint) fcn; // instruct reg
+
+  // Note: below code is same as fork()
+  // Clear %eax so that fork returns 0 in the child.
+  np->tf->eax = 0;
+
+  // Copy over parent process's open file and curr working directory.
+  for (i = 0; i < NOFILE; i++)
+    if (curproc->ofile[i])
+      np->ofile[i] = filedup(curproc->ofile[i]);
+  np->cwd = idup(curproc->cwd);
+
+  // Copy parent process's name
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  // Parent return child's PID. 
+  pid = np->pid;
+
+  // Set child process state to runnable.
+  acquire(&ptable.lock);
+  np->state = RUNNABLE;
+  release(&ptable.lock);
+
+  return pid;
+}
+
+// Same as wait(), but does not free the pgdir, which is shared by parent
+int
+join(void **stack) {
+  struct proc *p;
+  int havekids, pid;
+  struct proc *curproc = myproc();
+  
+  acquire(&ptable.lock);
+  for(;;) {
+    // Scan through table looking for exited children.
+    havekids = 0;
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->parent != curproc)
+        continue;
+
+      havekids = 1;
+      if (p->state == ZOMBIE) {
+        // Found one.
+        pid = p->pid;
+        kfree(p->kstack); // free kernel stack
+        p->kstack = 0;
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        release(&ptable.lock);
+        return pid;
+      }
+    }
+
+    // No point waiting if we don't have any children.
+    if (!havekids || curproc->killed) {
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // Process has children but none have exited.
+    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+/* kthread addition end */
+
+
 //PAGEBREAK: 36
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
