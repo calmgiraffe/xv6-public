@@ -2,15 +2,15 @@
 // Both the kernel and user programs use this header file.
 
 
-#define ROOTINO 1  // root i-number
+#define ROOTINO 1  // root i-number, start of superblock
 #define BSIZE 512  // block size
 
 // Disk layout:
 // [ boot block | super block | log | inode blocks |
 //                                          free bit map | data blocks]
 //
-// mkfs computes the super block and builds an initial file system. The
-// super block describes the disk layout:
+// mkfs computes the super block and builds an initial file system. 
+// The super block (28 B) describes the disk layout:
 struct superblock {
   uint size;         // Size of file system image (blocks)
   uint nblocks;      // Number of data blocks
@@ -23,9 +23,9 @@ struct superblock {
 
 #define NDIRECT 12
 #define NINDIRECT (BSIZE / sizeof(uint))
-#define MAXFILE (NDIRECT + NINDIRECT)
+#define MAXFILE (NDIRECT + NINDIRECT) // (12 + 128) pointers 
 
-// On-disk inode structure
+// On-disk inode structure (64 B)
 struct dinode {
   short type;           // File type
   short major;          // Major device number (T_DEV only)
@@ -50,6 +50,7 @@ struct dinode {
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
+// Directory entry (16 B). Contains inode # and name.
 struct dirent {
   ushort inum;
   char name[DIRSIZ];

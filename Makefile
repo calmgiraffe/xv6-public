@@ -159,6 +159,12 @@ _forktest: forktest.o $(ULIB)
 mkfs: mkfs.c fs.h
 	gcc -Werror -Wall -o mkfs mkfs.c
 
+mkfs_test_endian: mkfs_test_endian.c
+	gcc -Werror -Wall -o $@ $^
+
+xcheck: xcheck.c
+	gcc -Werror -Wall -o $@ $^
+
 # Prevent deletion of intermediate files, e.g. cat.o, after first build, so
 # that disk image changes after first build are persistent until clean.  More
 # details:
@@ -192,7 +198,9 @@ clean:
 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
 	initcode initcode.out kernel xv6.img fs.img kernelmemfs \
 	xv6memfs.img mkfs .gdbinit \
-	$(UPROGS)
+	$(UPROGS) \
+	mkfs_test_endian \
+	xcheck
 
 # make a printout
 FILES = $(shell grep -v '^\#' runoff.list)
