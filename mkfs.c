@@ -114,6 +114,7 @@ main(int argc, char *argv[])
   freeblock = nmeta;     // the first free data block that we can allocate
 
   // Zero out the file system img
+  // Implies that unallocated inodes are type 0
   for(i = 0; i < FSSIZE; i++)
     wsect(i, zeroes);
 
@@ -198,7 +199,7 @@ main(int argc, char *argv[])
   winode(rootino, &din);
 
   // Fill in the first "freeblock" bits of the bitmap
-  // -> bitmap of free blocks #'s, not free inode & data block #'s
+  // Bitmap tracks datablocks only
   balloc(freeblock);
 
   exit(0);
@@ -299,6 +300,7 @@ balloc(int used)
   printf("balloc: first %d blocks have been allocated\n", used);
   assert(used < BSIZE*8);
   bzero(buf, BSIZE);
+
   for(i = 0; i < used; i++){
     buf[i/8] = buf[i/8] | (0x1 << (i%8));
   }

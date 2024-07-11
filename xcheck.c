@@ -1,46 +1,139 @@
 #include <assert.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-
-#include "fs.h"
-#include "param.h"
-
+#include "fs.h"     // filesystem params
+#include "types.h"
 
 #define T_DIR  1   // Directory
 #define T_FILE 2   // File
 #define T_DEV  3   // Device
 
 
+struct block {
+    char buf[BSIZE];
+};
+
+static char *g_fsBasePtr = NULL;
+static struct superblock g_sblock;
+static uint g_dBlkNumStart;
+static int g_initialized = 0;
 
 
-// TODO: define a macro that accepts inodeNum and returns the bitmap value
-// TODO: define macro that accepts a generic block number and returns bitmap value
+void inodes_check();
+void root_directory_exists();
+void dirs_properly_formatted();
 
 
+// Unallocated blocks have type 0
+void inodes_check() {
+    assert(g_initialized);
 
+    uint numInodes = g_sblock.ninodes;
+    struct dinode *istart = (struct dinode*) (g_fsBasePtr + BSIZE*g_sblock.inodestart);
 
-void inodes_check(struct dinode *base, size_t numInodes) {
-    for (size_t i = 0; i < numInodes; i++)
-    {
-        if (base->type == T_DEV || base->type == T_DIR || base->type == T_FILE)
-        {   
-            continue;
-        } 
-        else if (1)
-        {
-            // check the corresponding inode bit in the bitmap.
-        } 
-
-        base++;
-    }
-            //printf("ERROR: bad inode.\n");
-
+    for (uint i = 0; i < numInodes; i++) {
+        if (istart->type == T_DEV || 
+            istart->type == T_DIR || 
+            istart->type == T_FILE ||
+            istart->type == 0 ) {
+                istart++;   
+                continue;
+        }
+        printf("ERROR: bad inode.\n");
+        exit(1);
+    }   
 }
+
+
+int valid_dblk_num(uint blk) {
+    assert(g_initialized);
+
+    if (blk >= g_dBlkNumStart && blk < g_sblock.size) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+
+// Root directory exists, its inode number is 1,
+// and the parent of the root directory is itself
+void root_directory_exists() {
+    assert(g_initialized);
+
+    // Root inode = inode num 1
+    struct dinode *rooti = (struct dinode*) (g_fsBasePtr + BSIZE*g_sblock.inodestart);
+    rooti++;
+    
+    // Check that inode 1 is type DIR
+    if (rooti->type != T_DIR) {
+        goto err;
+    }
+
+    // Look for directory entry ".."
+    const uint direntsPerBlk = BSIZE / sizeof(struct dirent);    
+    struct block *const basePtr = (struct block *) (g_fsBasePtr);
+
+    // Iterate through direct ptrs
+    for (uint i = 0; i < NDIRECT; i++) {
+
+        // Each direct ptr is actually a blk num
+        uint currBlk = rooti->addrs[i];
+
+        if (!valid_dblk_num(currBlk)) {
+            // check the next dir ptr
+            continue;
+        }
+        struct block *dBlk = basePtr + currBlk;
+
+        // Iterate through the dirents in the d blk
+        for (uint off = 0; off < direntsPerBlk; off++) {
+            struct dirent *dirent = ((struct dirent*) dBlk) + off;
+
+            if (!strcmp(dirent->name, "..") && dirent->inum == ROOTINO) {
+                // sucess
+                return;
+            }
+        }
+    }
+    // If no match in direct pointers, iterate through pointer array that is
+    // pointed to by indirect ptr
+
+    // NOTE: Assume 1 indirect ptr
+    assert(NINDIRECT == 1*BSIZE / sizeof(int));
+
+    uint *indirectBlk = (uint*) (basePtr + rooti->addrs[NDIRECT]);
+
+    for (int i = 0; i < NINDIRECT; i++) {
+        uint currBlk = indirectBlk[i];
+
+        if (!valid_dblk_num(currBlk)) {
+            continue;
+        }
+        struct block *dBlk = basePtr + currBlk;
+
+        // Iterate through the dirents in the d blk
+        for (uint off = 0; off < direntsPerBlk; off++) {
+            struct dirent *dirent = ((struct dirent*) dBlk) + off;
+
+            if (!strcmp(dirent->name, "..") && dirent->inum == ROOTINO) {
+                // sucess
+                return;
+            }
+        }
+    }
+
+err:
+    printf("ERROR: root directory does not exist.\n");
+    exit(1);
+}
+
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -48,7 +141,6 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Open and mmap file to address space
     int fd = open(argv[1], O_RDONLY);
     if (fd == -1) {
         printf("Image not found\n");
@@ -63,56 +155,40 @@ int main(int argc, char *argv[]) {
     }
     size_t filesize = st.st_size;
 
-    char *fmap = mmap(NULL, filesize, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (fmap == NULL) {
+     // Open .img and mmap to address space
+    g_fsBasePtr = mmap(NULL, filesize, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (g_fsBasePtr == NULL) {
         perror("mmap()");
         close(fd);
         exit(EXIT_FAILURE);
     }
 
-    // Record superblock's metadata
-    struct superblock *sblk = (struct superblock*) (fmap + ROOTIBSIZE);
-    assert(sblk->size == FSSIZE);
+    // Copy superblock's metadata
+    // Other globals: fs base ptr, 
+    struct superblock *sblk = (struct superblock*) (g_fsBasePtr + BSIZE);
+    memcpy(&g_sblock, sblk, sizeof(g_sblock));
+    g_dBlkNumStart = g_sblock.size - g_sblock.nblocks;
+    g_initialized = 1;
 
     /*
+    // Print all sblock members
     // Superblock correctness check
-    printf("size: %u\n", sblk->size);
-    printf("nblocks: %u\n", sblk->nblocks);
-    printf("ninodes: %u\n", sblk->ninodes);
-    printf("nlog: %u\n", sblk->nlog);
-    printf("logstart: %u\n", sblk->logstart);
-    printf("inodestart: %u\n", sblk->inodestart);
-    printf("bmapstart: %u\n", sblk->bmapstart);
+    printf("size: %u\n", sblk->size);       // 1000
+    printf("nblocks: %u\n", sblk->nblocks); // 941
+    printf("ninodes: %u\n", sblk->ninodes); // 200
+    printf("nlog: %u\n", sblk->nlog);       // 30
+    printf("logstart: %u\n", sblk->logstart);     // 2
+    printf("inodestart: %u\n", sblk->inodestart); // 32  
+    printf("bmapstart: %u\n", sblk->bmapstart);   // 58
     */
 
-    struct dinode *ibase = (struct dinode *) (fmap + BSIZE*(sblk->inodestart));
-    size_t ninodes = sblk->ninodes;
-    //char *bmapbase = fmap + BSIZE*(sblk->bmapstart);
+    inodes_check();
+    root_directory_exists();
 
 
-
-
-
-    inodes_check(ibase, ninodes);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    if (munmap(fmap, filesize) == -1) {
+    if (munmap(g_fsBasePtr, filesize) == -1) {
         perror("munmap()");
         close(fd);
-        exit(EXIT_FAILURE);
     }
 
     printf("All checks passed\n");

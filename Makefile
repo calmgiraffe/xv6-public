@@ -163,7 +163,7 @@ mkfs_test_endian: mkfs_test_endian.c
 	gcc -Werror -Wall -o $@ $^
 
 xcheck: xcheck.c
-	gcc -Werror -Wall -o $@ $^
+	gcc -Wall -o $@ $^
 
 # Prevent deletion of intermediate files, e.g. cat.o, after first build, so
 # that disk image changes after first build are persistent until clean.  More
